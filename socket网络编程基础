@@ -1,0 +1,187 @@
+#define _CRT_SECURE_NO_WARNINGS 1
+#include<stdio.h>
+#include<string.h>
+#include<unistd.h>
+#include<stdlib.h>
+#include<netdb.h>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<arpa/inet.h>
+//学习方法
+// 万事开头难,有点难度
+// 先将一些必要的概念,听不懂也没关系
+// 然后让网络通信程序跑起来,实现通信的功能
+// 再然后详细的介绍程序的流程,更多的概念,函数细节和实战经验
+//要有耐心反复观看视频,多动手,多测试
+// 
+//概念
+// socket就是插座(中文翻译成套接字)运行在计算机中的两个程序通过socket建立起一个通道,数据在通道中传输
+// socket把复杂的tcp/ip协议族隐藏了起来,对程序员来说,只要用好socket相关的函数,就可以完成网络通信了
+// 
+//socket提供了流(stream)和数据报(datagram)两种通信机制,即流socket和数据包socket.
+// 流socket基于tcp协议,是一个有序,可靠,双向字节流的通道,传输数据不会丢失,不会重复,顺序也不会错乱
+// 数据报socket基于udp协议,不需要建立和维持链接,可能会丢失或错乱,udp不是一个可靠的协议,对数据的长度有限制,但是他的效率比较高
+// 某些应用层协议,处于历史原因,受当时技术和网络跳进啊的限制,选择了基于udp实现,其选择的历有现在很可能已经不再成立了.
+// 实时的音频聊天采用udp,这种业务可以接受数据丢失且不必重传.本专题视频只介绍流socket,数据报socket的应用场景实在太少,以后可能更少
+// 只介绍流的socket即tcp协议
+// 
+// 简单的socket通信流程 客户/服务模式 简称c/s
+// 客户端
+// socket();//创建流式socket
+// connect();//向服务器发起链接请求.
+// send()/recv();//发送/接受数据	和服务端链接通信的通道
+// close();//关闭socket链接,释放资源
+// 
+// 服务端
+// socket();//创建流式socket
+// bind();//指定用于通信的IP地址和端口
+// lieten();//把socket设置为监听模式
+// accept();//接受客户端的链接
+// recv()/send();//接收/发送数据	和服务端链接通信的通道
+// close();//关闭socket链接,释放资源
+// 
+//c语言技术网(www.freecplus.net)
+//
+
+//客户端配置
+// socket通信的客户端类
+int main(int argc, char* argv[])
+{
+    if (argc != 3)
+    {
+        printf("usint:client 127.0.0.1 5005\n\n");
+        return -1;
+    }
+
+    //第一步:创建客户端的socket.
+    int sockfd;
+    if ((sockfd = socket(AF_INET,SOCK_STREAM,0))==-1)
+    {
+        perror("socket");
+        return -1;
+    }
+
+    //第二步:向服务器发起连接请求
+    struct hostent* h; //服务端地址信息的数据结构
+    if ((h = gethostbyname(argv[1])) == 0)//指定服务器的ip地址
+    {
+        printf("gethostbyname failed\n");
+        close(sockfd);
+        return -1;
+    }
+    struct sockaddr_in servaddr;
+    memset(&servaddr, 0,sizeof(servaddr));
+    servaddr.sin_family = AF_INET;  //协议族,在socket编程中只能是AF_INET
+    servaddr.sin_prot = htons(atoi(argv[2]));   //指定服务端的通信端口
+    memset(&servaddr.sin_addr,h->h_addr,h->h_length);
+    if (connect(sockfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) != 0)
+    {
+        perror("connect");
+        close(sockfd);
+        return -1;
+    }
+
+    char buffer[1024];    // 存放数据的缓冲区。
+
+    for (int ii = 0; ii < 5; ii++)   // 利用循环，与服务端进行5次交互。
+    {
+        int iret;
+        memset(buffer, 0, sizeof(buffer));
+        snprintf(buffer, 50, "这是第%d个超级女生，编号%03d。", ii + 1, ii + 1);
+        if ((iret = send(sockfd, buffer, strlen(buffer), 0)) <= 0) // 向服务端发送请求报文。
+        {
+            perror("send");
+            break;
+        }
+        printf("发送：%s\n", buffer)
+
+        memset(buffer, 0, sizeof(buffer));
+        if ((iret = recv(sockfd, buffer, sizeof(buffer), 0)) <= 0) // 接收服务端的回应报文。
+        {
+            printf("iret=%d\n", iret);
+            break;
+        }
+        printf("接收：%s\n", buffer);
+
+        sleep(1);
+    }
+
+    // 程序直接退出，析构函数会释放资源。
+}
+
+//服务器
+// socket通信的服务端类
+int main(int argc,char* argv[])
+{
+    if (argc != 2)
+    {
+        printf("/server 5005/n/n");
+        return -1;
+    }
+
+    //第一步创建服务端
+    int listenfd;   //文件描述符,unix下一切文件.0(标准输入) 1(标准输出) 2(标准错误)
+    if ((listenfd = socket(AF_INET,SOCK_STREAM,0))==-1) //在tcp中AF_INET.SOCK_STREAM是固定的
+    {
+        perror("socket");
+        return -1;
+    }
+
+    //第二步:把服务器端用于通信的地址和端口绑定到socket上
+    struct sockaddr_in servaddr; //服务端地址信息的数据结构
+    memset(&servaddr, 0,sizeof(servaddr));
+    servaddr.sin_family = AF_INET;  //协议族,在socket编程中只能是AF_INET
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);   //任意ip地址
+    //servaddr.sin_addr.s_addr = inet_addr("ip地址");   //指定ip地址
+    servaddr.sin_port = htons(atoi(argv[1]));   //指定通信端口
+    if (bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) != 0)
+    {
+        perror("bind");
+        close(listenfd);
+        return -1;
+    }
+    
+    //第三步 把socket设置为监听模式
+    if (listen(listenfd, 5) != 0)
+    {
+        perror("listen");
+        close(listenfd);
+        return -1;
+    }
+    
+    //第四步接受客户端的链接
+    int clientfd;   //客户端的socket
+    int socklen = sizeof(struct sockaddr_in);   //struct sockaddr_in的大小
+    struct sockaddr_in clientaddr; //客户端的地址信息
+    clientfd = accept(listenfd, (struct sockaddr*)&clientaddr, (socklen_t*)&socklen);
+    printf("客户端(%s)已连接.\n", inet_ntoa(clientaddr.sin_addr));
+
+    //第五步:与客户端通信,接受客户端发过来的保温后,恢复ok
+    char buffer[1024];
+    while (1)
+    {
+        int riet;
+        memset(buffer, 0, sizeof(buffer));
+        if ((iret = recv(clientfd, buffer, sizeof(buffer), 0)) <= 0)
+        {
+            printf("iret=%d\n", iret);
+            break;
+        }
+        printf("接收:%s\n", buffer);
+
+        strcpy(buffer, "ok");
+        if ((iret = send(clientfd,buffer,strlen(buffer),0))<=0)//向客户端发送相应结果
+        {
+            perror("send");
+            break;
+        }
+        printf("发送:%s\n", buffer);
+    }
+
+}
+
+//以上配置在linux下的gcc
+
+//在socket通信的客户端和服务端的程序里,出现了多种数据结构,调用了多个函数,涉及到很多方面的知识
+//
+//
